@@ -59,7 +59,7 @@ async def start_reminders(ctx, hour: int, minute: int):
     scheduler.remove_all_jobs()
     
     # Schedule the job at the specified hour and minute every Tuesday
-    scheduler.add_job(send_weekly_reminders, 'cron', day_of_week='tue', hour=hour, minute=minute)
+    scheduler.add_job(send_weekly_reminders, 'cron', day_of_week='thu', hour=hour, minute=minute)
     
     await ctx.send(f"Weekly reminders scheduled for every Tuesday at {hour:02d}:{minute:02d}")
 
