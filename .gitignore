@@ -48,4 +48,7 @@ responses_*.csv
 
 # OS specific
 .DS_Store
-Thumbs.db 
+Thumbs.db
+
+# Exclude sensitive and unnecessary files
+*.csv 

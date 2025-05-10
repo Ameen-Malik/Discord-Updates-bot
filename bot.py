@@ -5,11 +5,16 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from datetime import datetime
 import pandas as pd
 from dotenv import load_dotenv
+# Ensure DatabaseManager is imported
 from database import DatabaseManager
 
 # Load environment variables
 load_dotenv()
+
+# Get token from environment variable
 TOKEN = os.getenv('DISCORD_TOKEN')
+if not TOKEN:
+    raise ValueError("No Discord token found. Please set DISCORD_TOKEN environment variable.")
 
 # Bot setup
 intents = discord.Intents.default()
@@ -25,49 +30,81 @@ scheduler = AsyncIOScheduler()
 @bot.event
 async def on_ready():
     print(f'Logged in as {bot.user}')
-    await db.init_db()
-    scheduler.start()
+    try:
+        await db.init_db()
+        scheduler.start()
+        print("Database initialized and bot started successfully")
+    except Exception as e:
+        print(f"Error during initialization: {e}")
+        raise
 
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def load_mentees(ctx, file: discord.Attachment):
-    """Load mentees from a CSV file"""
+    """Load mentees from a CSV file, skipping existing ones"""
     if not file.filename.endswith('.csv'):
         await ctx.send("Please provide a CSV file")
         return
 
     await file.save('temp_mentees.csv')
-    df = pd.read_csv('temp_mentees.csv')
-    
-    for _, row in df.iterrows():
-        await db.add_mentee(row['name'], str(row['discord_id']))
-    
-    os.remove('temp_mentees.csv')
-    await ctx.send(f"Successfully loaded {len(df)} mentees")
+    try:
+        df = pd.read_csv('temp_mentees.csv')
 
-# @bot.command()
-# @commands.has_permissions(administrator=True)
-# async def start_reminders(ctx):
-#     """Start sending weekly reminders"""
-#     scheduler.add_job(send_weekly_reminders, 'cron', day_of_week='tue', hour=16)
-#     await ctx.send("Weekly reminders scheduled for every Monday at 10 AM")
+        added_count = 0
+        skipped_count = 0
+        total_rows = len(df)
+
+        if 'name' not in df.columns or 'discord_id' not in df.columns:
+             await ctx.send("CSV must contain 'name' and 'discord_id' columns.")
+             return
+
+        # Convert discord_id to string type to handle potential large integer issues
+        df['discord_id'] = df['discord_id'].astype(str)
+
+        message = await ctx.send(f"Processing {total_rows} rows from CSV...")
+
+        for index, row in df.iterrows():
+            # find_or_add_mentee returns (mentee_object, was_added_boolean)
+            mentee, was_added = await db.find_or_add_mentee(row['name'], row['discord_id'])
+            if was_added:
+                added_count += 1
+            else:
+                skipped_count += 1
+            # Optional: Update message periodically for long CSVs
+            if (index + 1) % 10 == 0 or (index + 1) == total_rows:
+                 # Use edit to update the previous message instead of sending new ones
+                 await message.edit(content=f"Processed {index + 1}/{total_rows} rows. Added: {added_count}, Skipped: {skipped_count}")
+
+
+        os.remove('temp_mentees.csv')
+        # Final message update
+        await message.edit(content=f"Finished loading mentees. Added {added_count}, skipped {skipped_count} (already existed).")
+
+
+    except Exception as e:
+        await ctx.send(f"An error occurred while processing the CSV: {e}")
+        # Clean up temp file even if error occurs
+        if os.path.exists('temp_mentees.csv'):
+             os.remove('temp_mentees.csv')
+
+
+# ... rest of the bot.py code remains the same ...
+
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def start_reminders(ctx, hour: int, minute: int):
     """Start sending weekly reminders at a custom time (24-hour format)"""
-    # Remove existing job if any to avoid duplicates
-    scheduler.remove_all_jobs()
-    
-    # Schedule the job at the specified hour and minute every Tuesday
+    scheduler.remove_all_jobs() # Remove existing job if any to avoid duplicates
+    # Schedule the job at the specified hour and minute every Thursday
     scheduler.add_job(send_weekly_reminders, 'cron', day_of_week='thu', hour=hour, minute=minute)
-    
-    await ctx.send(f"Weekly reminders scheduled for every Tuesday at {hour:02d}:{minute:02d}")
+    await ctx.send(f"Weekly reminders scheduled for every Thursday at {hour:02d}:{minute:02d}")
 
 
 async def send_weekly_reminders():
     mentees = await db.get_all_mentees()
     for mentee in mentees:
         try:
+            # Use fetch_user as you need the User object for DMs
             user = await bot.fetch_user(int(mentee.discord_id))
             await user.send(
                 "Hi! Please provide your weekly update:\n"
@@ -77,27 +114,33 @@ async def send_weekly_reminders():
                 "You can respond with text or a voice message."
             )
         except Exception as e:
-            print(f"Failed to send reminder to {mentee.name}: {e}")
+            print(f"Failed to send reminder to {mentee.name} ({mentee.discord_id}): {e}")
+
 
 @bot.event
 async def on_message(message):
     if isinstance(message.channel, discord.DMChannel) and not message.author.bot:
+        author_id_str = str(message.author.id) # Get author ID as string
+
         # Handle text response
         if message.content:
-            await db.add_response(
-                str(message.author.id),
-                text_response=message.content
-            )
-            await message.channel.send("Thank you for your text response!")
+            # add_response finds the mentee within its own session
+            response = await db.add_response(author_id_str, text_response=message.content)
+            if response: # Check if response was successfully added (mentee found)
+                 await message.channel.send("Thank you for your text response!")
+            # else: Mentee not found, maybe send a message back? Or just ignore.
 
         # Handle voice message
+        # Iterate through attachments regardless of text content
         for attachment in message.attachments:
+            # Check if attachment content type is audio
             if attachment.content_type and 'audio' in attachment.content_type:
-                await db.add_response(
-                    str(message.author.id),
-                    voice_response_url=attachment.url
-                )
-                await message.channel.send("Thank you for your voice response!")
+                # add_response finds the mentee within its own session
+                response = await db.add_response(author_id_str, voice_response_url=attachment.url)
+                if response: # Check if response was successfully added (mentee found)
+                    await message.channel.send("Thank you for your voice response!")
+                # else: Mentee not found, maybe send a message back? Or just ignore.
+
 
     await bot.process_commands(message)
 
@@ -105,26 +148,43 @@ async def on_message(message):
 @commands.has_permissions(administrator=True)
 async def get_responses(ctx, identifier: str):
     """Get responses by mentee name or Discord ID"""
-    # Try to get responses by Discord ID first
-    responses = await db.get_responses_by_discord_id(identifier)
-    
-    # If no responses found, try by name
+    # Ensure identifier is treated as a string for database lookup
+    identifier_str = str(identifier).strip() # Also strip whitespace
+
+    # Try to get responses by Discord ID first (this method now eager loads mentee)
+    responses = await db.get_responses_by_discord_id(identifier_str)
+
+    # If no responses found AND the identifier wasn't a valid Discord ID format (optional check),
+    # OR if the identifier was an ID but yielded no responses, try by name.
+    # Simpler logic: Just try by name if no responses found by ID.
     if not responses:
-        responses = await db.get_responses_by_name(identifier)
-    
+        # get_responses_by_name now also eager loads mentee and handles mentee not found
+        responses = await db.get_responses_by_name(identifier_str)
+
+
     if not responses:
-        await ctx.send(f"No responses found for {identifier}")
+        await ctx.send(f"No responses or mentee found for '{identifier}'")
         return
 
     # Create a formatted message
-    message = f"Responses for {identifier}:\n\n"
+    # Access the eagerly loaded mentee directly from the first response
+    first_response = responses[0]
+    mentee = first_response.mentee # This is now loaded and accessible
+
+    # Use the mentee's actual name and ID for the header
+    header_identifier = mentee.name if mentee else identifier_str # Use name if mentee object is valid, else input
+    header_discord_id = mentee.discord_id if mentee else "Unknown" # Use ID if mentee object is valid
+
+    message = f"Responses for {header_identifier} ({header_discord_id}):\n\n"
     for response in responses:
+        # Access mentee through the relationship, which is now loaded
+        mentee = response.mentee # It's already there!
         message += f"Week {response.week_number}:\n"
         if response.text_response:
             message += f"Text: {response.text_response}\n"
         if response.voice_response_url:
             message += f"Voice: {response.voice_response_url}\n"
-        message += f"Date: {response.created_at}\n\n"
+        message += f"Date: {response.created_at.strftime('%Y-%m-%d %H:%M UTC')}\n\n" # Format date for readability
 
     # Split message if too long
     if len(message) > 2000:
@@ -139,9 +199,23 @@ async def get_responses(ctx, identifier: str):
 async def export_responses(ctx):
     """Export all responses to a CSV file"""
     filename = f"responses_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
-    await db.export_responses_to_csv(filename)
-    await ctx.send("Responses exported successfully!", file=discord.File(filename))
-    os.remove(filename)
+    try:
+        # export_responses_to_csv now returns the filename path
+        exported_filepath = await db.export_responses_to_csv(filename)
+        await ctx.send("Responses exported successfully!", file=discord.File(exported_filepath))
+    except Exception as e:
+        await ctx.send(f"An error occurred during export: {e}")
+        # Clean up temporary file even if sending fails
+    finally:
+         # Ensure file is removed even if sending fails
+         if os.path.exists(filename):
+              os.remove(filename)
 
-# Run the bot
-bot.run(TOKEN) 
+
+# Run the bot with error handling
+if __name__ == "__main__":
+    try:
+        bot.run(TOKEN)
+    except Exception as e:
+        print(f"Error running bot: {e}")
+        raise
