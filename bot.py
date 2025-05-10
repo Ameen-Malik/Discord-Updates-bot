@@ -7,6 +7,9 @@ import pandas as pd
 from dotenv import load_dotenv
 # Ensure DatabaseManager is imported
 from database import DatabaseManager
+import aiohttp
+from aiohttp import web
+import asyncio
 
 # Load environment variables
 load_dotenv()
@@ -26,6 +29,14 @@ intents.message_content = True
 bot = commands.Bot(command_prefix='!', intents=intents)
 db = DatabaseManager()
 scheduler = AsyncIOScheduler()
+
+# Create aiohttp app for health check
+app = web.Application()
+
+async def health_check(request):
+    return web.Response(text="Bot is running!")
+
+app.router.add_get('/health', health_check)
 
 @bot.event
 async def on_ready():
@@ -215,6 +226,13 @@ async def export_responses(ctx):
 # Run the bot with error handling
 if __name__ == "__main__":
     try:
+        # Start the web server
+        runner = web.AppRunner(app)
+        asyncio.get_event_loop().run_until_complete(runner.setup())
+        site = web.TCPSite(runner, '0.0.0.0', int(os.getenv('PORT', 8080)))
+        asyncio.get_event_loop().run_until_complete(site.start())
+        
+        # Start the bot
         bot.run(TOKEN)
     except Exception as e:
         print(f"Error running bot: {e}")
