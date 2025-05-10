@@ -103,12 +103,28 @@ async def load_mentees(ctx, file: discord.Attachment):
 
 @bot.command()
 @commands.has_permissions(administrator=True)
-async def start_reminders(ctx, hour: int, minute: int):
-    """Start sending weekly reminders at a custom time (24-hour format)"""
+async def start_reminders(ctx, day: str, hour: int, minute: int):
+    """Start sending weekly reminders at a custom time (24-hour format)
+    day: Day of the week (sun, mon, tue, wed, thu, fri, sat)
+    hour: Hour in 24-hour format (0-23)
+    minute: Minute (0-59)
+    """
+    # Validate day input
+    valid_days = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat']
+    day = day.lower()
+    if day not in valid_days:
+        await ctx.send(f"Invalid day. Please use one of: {', '.join(valid_days)}")
+        return
+
+    # Validate time inputs
+    if not (0 <= hour <= 23 and 0 <= minute <= 59):
+        await ctx.send("Invalid time. Hour must be 0-23 and minute must be 0-59")
+        return
+
     scheduler.remove_all_jobs() # Remove existing job if any to avoid duplicates
-    # Schedule the job at the specified hour and minute every Thursday
-    scheduler.add_job(send_weekly_reminders, 'cron', day_of_week='thu', hour=hour, minute=minute)
-    await ctx.send(f"Weekly reminders scheduled for every Thursday at {hour:02d}:{minute:02d}")
+    # Schedule the job at the specified day, hour and minute
+    scheduler.add_job(send_weekly_reminders, 'cron', day_of_week=day, hour=hour, minute=minute)
+    await ctx.send(f"Weekly reminders scheduled for every {day.capitalize()} at {hour:02d}:{minute:02d}")
 
 
 async def send_weekly_reminders():
