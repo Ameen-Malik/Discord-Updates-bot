@@ -133,12 +133,14 @@ async def send_weekly_reminders():
         try:
             # Use fetch_user as you need the User object for DMs
             user = await bot.fetch_user(int(mentee.discord_id))
+            
             await user.send(
-                "Hi! Please provide your weekly update:\n"
-                "1. What progress have you made this week?\n"
-                "2. Are you facing any blockers?\n"
-                "3. What are your plans for next week?\n\n"
-                "You can respond with text or a voice message."
+                "Hi! I’m the **100x Update Buddy**, here to collect your weekly check-in 📝\n\n"
+                "Your responses are reviewed by the 100x team and help us personalize your experience during Office Hour sessions and beyond.\n\n"
+                "1. **This week’s progress** – What did you work on and accomplish?\n"
+                "2. **Any blockers** – Are you facing any challenges we should be aware of or help you with?\n"
+                "3. **Next week’s focus** – What are your key priorities for the coming week?\n\n"
+                "Please make sure to reply with your update as soon as you can - latest by Sunday EoD. Looking forward to your update 🙂!"
             )
         except Exception as e:
             print(f"Failed to send reminder to {mentee.name} ({mentee.discord_id}): {e}")
